@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "PytHHOn3D"
+version = "0.1.0"
+description = ""
+authors = ["davidsiedel <davidsiedel@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+numpy = "^1.18.4"
+scipy = "^1.4.1"
+quadpy = "^0.14.11"
+
+[tool.poetry.dev-dependencies]
+pytest = "^5.2"
+rope = "^0.17.0"
+black = "^19.10b0"
+ipython = "^7.14.0"
+matplotlib = "^3.2.1"
+
+[build-system]
+requires = ["poetry>=0.12"]
+build-backend = "poetry.masonry.api"

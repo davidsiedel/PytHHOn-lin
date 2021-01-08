@@ -1,0 +1,12 @@
+***geometry
+**node
+1 1
+1 0.0
+**element
+0
+***group
+**nset LEFT
+1
+**nset RIGHT
+1
+***return
