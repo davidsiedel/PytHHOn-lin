@@ -12,7 +12,6 @@ import matplotlib.cbook as cbook
 import matplotlib.cm as cm
 import matplotlib.mlab as mlab
 import matplotlib.tri as mtri
-from matplotlib.colors import LinearSegmentedColormap
 from matplotlib import rc
 
 current_folder = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -47,17 +46,6 @@ from core.load import Load
 from core.condensation import Condensation
 from core.integration import Integration
 
-lam, mu = 1000.0, 1.0
-# lam, mu = 1.0, 1.0
-
-u_0 = lambda x: (np.sin(np.pi * x[0])) * (np.sin(np.pi * x[1]))
-
-u = [u_0]
-
-f_0 = lambda x: (2.0 * (np.pi) ** 2) * (np.sin(np.pi * x[0])) * (np.sin(np.pi * x[1]))
-
-f = [f_0]
-
 
 def build(
     mesh_file: str, field_dimension: int, face_polynomial_order: int, cell_polynomial_order: int, operator_type: str,
@@ -66,11 +54,11 @@ def build(
     ====================================================================================================================
     Description :
     ====================================================================================================================
-
+    
     ====================================================================================================================
     Parameters :
     ====================================================================================================================
-
+    
     ====================================================================================================================
     Exemple :
     ====================================================================================================================
@@ -129,7 +117,7 @@ def build(
         cell_vertices = vertices[cell_vertices_connectivity_matrix]
         cell = Cell(cell_vertices, cell_connectivity_matrix, integration_order)
         cells.append(cell)
-    print("DONE")
+    # print("DONE")
     # ------------------------------------------------------------------------------------------------------------------
     # Initilaizing Elements objects
     # ------------------------------------------------------------------------------------------------------------------
@@ -174,16 +162,17 @@ def solve(
     stabilization_parameter: float,
     boundary_conditions: dict,
     load: List[Callable],
+    u: List[Callable],
 ):
     """
     ====================================================================================================================
     Description :
     ====================================================================================================================
-
+    
     ====================================================================================================================
     Parameters :
     ====================================================================================================================
-
+    
     ====================================================================================================================
     Exemple :
     ====================================================================================================================
@@ -208,8 +197,9 @@ def solve(
         # External forces
         # --------------------------------------------------------------------------------------------------------------
         number_of_local_faces = len(local_faces)
-        a = unknown.field_dimension * (
-            cell_basis_l.basis_dimension + number_of_local_faces * face_basis_k.basis_dimension
+        a = (
+            cell_basis_l.basis_dimension * unknown.field_dimension
+            + number_of_local_faces * face_basis_k.basis_dimension * unknown.field_dimension
         )
         local_external_forces = np.zeros((a,))
         load_vector = Load(local_cell, cell_basis_l, unknown, load).load_vector
@@ -221,20 +211,21 @@ def solve(
         for local_face_index, global_face_index in enumerate(local_faces_indices):
             face = faces[global_face_index]
             face_reference_frame_transformation_matrix = Operator.get_face_passmat(local_cell, face)
-            # for boundary_name, nset in zip(nsets, nsets.values()):
             for boundary_name, nset in zip(nsets_faces, nsets_faces.values()):
-                if connectivity[local_face_index] in nset:
+                if global_face_index in nset:
                     pressure = boundary_conditions[boundary_name][1]
                     pressure_vector = Pressure(
                         face, face_basis_k, face_reference_frame_transformation_matrix, unknown, pressure
                     ).pressure_vector
-                else:
-                    pressure_vector = Pressure(
-                        face, face_basis_k, face_reference_frame_transformation_matrix, unknown
-                    ).pressure_vector
-            l0 = local_face_index * unknown.field_dimension * face_basis_k.basis_dimension
-            l1 = (local_face_index + 1) * unknown.field_dimension * face_basis_k.basis_dimension
-            local_external_forces[l0:l1] += pressure_vector
+                    l0 = (
+                        unknown.field_dimension * cell_basis_l.basis_dimension
+                        + local_face_index * unknown.field_dimension * face_basis_k.basis_dimension
+                    )
+                    l1 = (
+                        unknown.field_dimension * cell_basis_l.basis_dimension
+                        + (local_face_index + 1) * unknown.field_dimension * face_basis_k.basis_dimension
+                    )
+                    local_external_forces[l0:l1] += pressure_vector
         # --------------------------------------------------------------------------------------------------------------
         # Stffness matrix
         # --------------------------------------------------------------------------------------------------------------
@@ -254,8 +245,12 @@ def solve(
                 # ------------------------------------------------------------------------------------------------------
                 local_mass_matrix[l0:l1, c0:c1] += m
         local_gradient_operator = operators[cell_index].local_gradient_operator
-        # print(local_gradient_operator.shape)
         local_stiffness_form = local_gradient_operator.T @ local_mass_matrix @ local_gradient_operator
+        # local_stiffness_form = (
+        #     local_gradient_operator[: 3.0 * cell_basis_k.basis_dimension, :].T
+        #     @ local_mass_matrix[: 3.0 * cell_basis_k.basis_dimension, : 3.0 * cell_basis_k.basis_dimension]
+        #     @ local_gradient_operator[: 3.0 * cell_basis_k.basis_dimension, :]
+        # )
         # --------------------------------------------------------------------------------------------------------------
         # Stabilization matrix
         # --------------------------------------------------------------------------------------------------------------
@@ -303,23 +298,16 @@ def solve(
     # Displacement enforcement through Lagrange multiplier
     # ------------------------------------------------------------------------------------------------------------------
     number_of_constrained_faces = 0
-    # for boundary_name, nset in zip(nsets, nsets.values()):
     for boundary_name, nset in zip(nsets_faces, nsets_faces.values()):
-        # print(boundary_name, nset)
         displacement = boundary_conditions[boundary_name][0]
         for displacement_component in displacement:
             if not displacement_component is None:
                 number_of_constrained_faces += len(nset)
     lagrange_multiplyer_matrix = np.zeros(
-        (
-            number_of_constrained_faces * face_basis_k.basis_dimension,
-            # number_of_faces * unknown.field_dimension * face_basis_k.basis_dimension,
-            total_system_size,
-        )
+        (number_of_constrained_faces * face_basis_k.basis_dimension, total_system_size,)
     )
     h_vector = np.zeros((number_of_constrained_faces * face_basis_k.basis_dimension,))
     iter_constrained_face = 0
-    # for boundary_name, nset in zip(nsets, nsets.values()):
     for boundary_name, nset in zip(nsets_faces, nsets_faces.values()):
         for face_global_index in nset:
             face = faces[face_global_index]
@@ -336,12 +324,6 @@ def solve(
                     displacement_vector = Displacement(
                         face, face_basis_k, face_reference_frame_transformation_matrix, displacement_component
                     ).displacement_vector
-                    # if False:
-                    #     print("hello")
-                    #     displacement_vector = np.zeros((face_basis.basis_dimension,))
-                    #     if displacement_component(0) != 0:
-                    #         displacement_vector[0] = 1.0
-                    #     print(displacement_vector)
                     # --------------------------------------------------------------------------------------------------
                     displacement_vector = m_psi_psi_face_inv @ displacement_vector
                     # --------------------------------------------------------------------------------------------------
@@ -359,9 +341,6 @@ def solve(
                     # --------------------------------------------------------------------------------------------------
                     h_vector[l0:l1] += displacement_vector
                     iter_constrained_face += 1
-    # print("h_vector : \n{}".format(h_vector))
-    # print(h_vector)
-    # print("lagrange_multiplyer_matrix : \n{}".format(lagrange_multiplyer_matrix))
     # ------------------------------------------------------------------------------------------------------------------
     double_lagrange = False
     # ------------------------------------------------------------------------------------------------------------------
@@ -465,15 +444,10 @@ def solve(
         c0 = total_system_size + (number_of_constrained_faces * face_basis_k.basis_dimension)
         c1 = total_system_size + 2 * (number_of_constrained_faces * face_basis_k.basis_dimension)
         global_matrix_2[l0:l1, c0:c1] += id_lag
-    # print("global_matrix_2 : \n{}".format(global_matrix_2))
-    # print("global_vector_2 : \n{}".format(global_vector_2))
     # ------------------------------------------------------------------------------------------------------------------
     # Solving the global system for faces unknowns
     # ------------------------------------------------------------------------------------------------------------------
-    # print("global_matrix : \n{}".format(global_matrix_2))
-    print("COND : {}".format(np.linalg.cond(global_matrix_2)))
     global_solution = np.linalg.solve(global_matrix_2, global_vector_2)
-    # print("global_solution : \n{}".format(global_solution))
     # ------------------------------------------------------------------------------------------------------------------
     # Getting the number of vertices
     # ------------------------------------------------------------------------------------------------------------------
@@ -485,17 +459,16 @@ def solve(
     # ------------------------------------------------------------------------------------------------------------------
     quadrature_points = np.zeros((number_of_quadrature_points, unknown.problem_dimension))
     quadrature_weights = np.zeros((number_of_quadrature_points,))
-    unknowns_at_vertices = [np.zeros((number_of_vertices,)) for i in range(unknown.field_dimension)]
-    f_unknowns_at_vertices = [np.zeros((number_of_vertices,)) for i in range(unknown.field_dimension)]
-    # unknowns_at_quadrature_points = [np.zeros((number_of_quadrature_points,)) for i in range(unknown.field_dimension)]
+    unknowns_at_vertices = np.zeros((number_of_vertices, unknown.field_dimension))
+    f_unknowns_at_vertices = np.zeros((number_of_vertices, unknown.field_dimension))
     unknowns_at_quadrature_points = np.zeros((number_of_quadrature_points, unknown.field_dimension))
-    error_at_quadrature_points = [np.zeros((number_of_quadrature_points,)) for i in range(unknown.field_dimension)]
+    error_at_quadrature_points = np.zeros((number_of_quadrature_points, unknown.field_dimension))
+    div_at_quadrature_points = np.zeros((number_of_quadrature_points,))
     vertices_weights = np.zeros((number_of_vertices,))
     f_vertices_weights = np.zeros((number_of_vertices,))
     # ------------------------------------------------------------------------------------------------------------------
     # Desassembly
     # ------------------------------------------------------------------------------------------------------------------
-    quadrature_point_count = 0
     # ==================================================================================================================
     # ==================================================================================================================
     faces_indices = range(number_of_faces)
@@ -519,11 +492,12 @@ def solve(
                 global_index = face_vertices_connectivity_matrix[i]
                 l0 = global_index
                 l1 = global_index + 1
-                f_unknowns_at_vertices[direction][l0:l1] += np.sum(vertex_value_vector)
-                f_vertices_weights[l0:l1] += 1.0
+                f_unknowns_at_vertices[l0:l1, direction] += np.sum(vertex_value_vector)
+            f_vertices_weights[l0:l1] += 1.0
     # ==================================================================================================================
     # ==================================================================================================================
     x_cell_list, x_faces_list = [], []
+    quadrature_point_count = 0
     for cell_index in cells_indices:
         # --------------------------------------------------------------------------------------------------------------
         # Getting faces unknowns
@@ -576,33 +550,64 @@ def solve(
                 global_index = cell_vertices_connectivity_matrix[i]
                 l0 = global_index
                 l1 = global_index + 1
-                unknowns_at_vertices[direction][l0:l1] += np.sum(vertex_value_vector)
-                vertices_weights[l0:l1] += 1.0
+                unknowns_at_vertices[l0:l1, direction] += np.sum(vertex_value_vector)
+            vertices_weights[l0:l1] += 1.0
         # --------------------------------------------------------------------------------------------------------------
+        grad_op = operators[cell_index].local_gradient_operator
+        grad_vect = grad_op @ x_element
         for i, quadrature_point in enumerate(local_cell.quadrature_points):
-            v = cell_basis_l.get_phi_vector(quadrature_point, local_cell.centroid, local_cell.diameter)
+            v_k = cell_basis_k.get_phi_vector(quadrature_point, local_cell.centroid, local_cell.diameter)
+            v_l = cell_basis_l.get_phi_vector(quadrature_point, local_cell.centroid, local_cell.diameter)
             for direction in range(unknown.field_dimension):
-                l0 = direction * cell_basis_l.basis_dimension
-                l1 = (direction + 1) * cell_basis_l.basis_dimension
-                vertex_value_vector = v * x_cell[l0:l1]
-                vertex_error_vector = v * error_vector[l0:l1]
-                q0 = quadrature_point_count
-                q1 = quadrature_point_count + 1
-                # unknowns_at_quadrature_points[direction][q0:q1] += np.sum(vertex_value_vector)
-                unknowns_at_quadrature_points[quadrature_point_count, direction] += np.sum(vertex_value_vector)
-                error_at_quadrature_points[direction][q0:q1] += np.sum(vertex_error_vector)
-                quadrature_points[quadrature_point_count] += quadrature_point
-                quadrature_weights[quadrature_point_count] += local_cell.quadrature_weights[i]
+                # ------------------------------------------------------------------------------------------------------
+                l0_l = direction * cell_basis_l.basis_dimension
+                l1_l = (direction + 1) * cell_basis_l.basis_dimension
+                # ------------------------------------------------------------------------------------------------------
+                l0_k = direction * cell_basis_k.basis_dimension
+                l1_k = (direction + 1) * cell_basis_k.basis_dimension
+                # ------------------------------------------------------------------------------------------------------
+                div_cell = v_k * grad_vect[l0_k:l1_k]
+                xcell_vector = v_l * x_cell[l0_l:l1_l]
+                ercell_vector = v_l * error_vector[l0_l:l1_l]
+                # --------
+                div_at_quadrature_points[quadrature_point_count] += np.sum(div_cell)
+                unknowns_at_quadrature_points[quadrature_point_count, direction] += np.sum(xcell_vector)
+                error_at_quadrature_points[quadrature_point_count, direction] += np.sum(ercell_vector)
+            quadrature_points[quadrature_point_count] += quadrature_point
+            quadrature_weights[quadrature_point_count] += local_cell.quadrature_weights[i]
             quadrature_point_count += 1
+        # --------------------------------------------------------------------------------------------------------------
+        # for i, quadrature_point in enumerate(local_cell.quadrature_points):
+        #     v_l = cell_basis_l.get_phi_vector(quadrature_point, local_cell.centroid, local_cell.diameter)
+        #     for direction in range(unknown.field_dimension):
+        #         l0 = direction * cell_basis_l.basis_dimension
+        #         l1 = (direction + 1) * cell_basis_l.basis_dimension
+        #         vertex_value_vector = v_l * x_cell[l0:l1]
+        #         vertex_error_vector = v_l * error_vector[l0:l1]
+        #         l0 = quadrature_point_count
+        #         l1 = quadrature_point_count + 1
+        #         unknowns_at_quadrature_points[l0:l1, direction] += np.sum(vertex_value_vector)
+        #         error_at_quadrature_points[l0:l1, direction] += np.sum(vertex_error_vector)
+        #     quadrature_points[quadrature_point_count] += quadrature_point
+        #     quadrature_weights[quadrature_point_count] += local_cell.quadrature_weights[i]
+        #     quadrature_point_count += 1
     # ------------------------------------------------------------------------------------------------------------------
     # Global matrix
     # ------------------------------------------------------------------------------------------------------------------
     for direction in range(unknown.field_dimension):
-        unknowns_at_vertices[direction] = unknowns_at_vertices[direction] / vertices_weights
-        f_unknowns_at_vertices[direction] = f_unknowns_at_vertices[direction] / f_vertices_weights
+        unknowns_at_vertices[:, direction] = unknowns_at_vertices[:, direction] / vertices_weights
+        f_unknowns_at_vertices[:, direction] = f_unknowns_at_vertices[:, direction] / f_vertices_weights
+        # unknowns_at_vertices = unknowns_at_vertices / vertices_weights
+        # f_unknowns_at_vertices = f_unknowns_at_vertices / f_vertices_weights
     return (
         (vertices, unknowns_at_vertices),
-        (quadrature_points, unknowns_at_quadrature_points, error_at_quadrature_points, quadrature_weights),
+        (
+            quadrature_points,
+            unknowns_at_quadrature_points,
+            error_at_quadrature_points,
+            div_at_quadrature_points,
+            quadrature_weights,
+        ),
         (vertices, f_unknowns_at_vertices),
         (x_cell_list, x_faces_list),
         # unknowns_at_faces
@@ -614,11 +619,11 @@ def is_polynomial_order_consistent(face_polynomial_order: int, cell_polynomial_o
     ====================================================================================================================
     Description :
     ====================================================================================================================
-
+    
     ====================================================================================================================
     Parameters :
     ====================================================================================================================
-
+    
     ====================================================================================================================
     Exemple :
     ====================================================================================================================
@@ -640,18 +645,18 @@ def get_operator(
     unknown: Unknown,
 ):
     """
-    ================================================================================================================
-    Description :
-    ================================================================================================================
-
-    ================================================================================================================
-    Parameters :
-    ================================================================================================================
-
-    ================================================================================================================
-    Exemple :
-    ================================================================================================================
-    """
+        ================================================================================================================
+        Description :
+        ================================================================================================================
+        
+        ================================================================================================================
+        Parameters :
+        ================================================================================================================
+        
+        ================================================================================================================
+        Exemple :
+        ================================================================================================================
+        """
     if operator_type == "HDG":
         op = HDG(cell, faces, cell_basis_l, cell_basis_k, face_basis_k, unknown)
     elif operator_type == "HDGs":
@@ -668,40 +673,34 @@ def solve_2D_incompressible_problem(
     face_polynomial_order: int,
     cell_polynomial_order: int,
     operator_type: str,
-    stabilization_parameter: int,
+    stabilization_parameter: float,
 ):
-    field_dimension = 1
-    mesh_file = os.path.join(source, "meshes/2D/c2d3_{}.geof".format(number_of_elements))
-    create_plot(mesh_file, number_of_elements)
+    field_dimension = 2
+    mesh_file = os.path.join(source, "meshes/2D/c2d3_{}_ern.geof".format(number_of_elements))
+    triangles = create_plot(mesh_file, number_of_elements)
+    lam = 1000.0
+    mu = 1.0
     # ------------------------------------------------------------------------------------------------------------------
-    pressure_left = [None]
-    pressure_right = [None]
-    pressure_top = [None]
-    pressure_bottom = [None]
+    u_0 = lambda x: (np.sin(np.pi * x[0])) * (np.sin(np.pi * x[1])) + x[0] / (2.0 * lam)
+    u_1 = lambda x: (np.cos(np.pi * x[0])) * (np.cos(np.pi * x[1])) + x[1] / (2.0 * lam)
+    # u_0 = lambda x: (np.sin(np.pi * x[0])) * (np.sin(np.pi * x[1]))
+    # u_1 = lambda x: (np.cos(np.pi * x[0])) * (np.cos(np.pi * x[1]))
+    u = [u_0, u_1]
+    f_0 = lambda x: -(2.0 * (np.pi) ** 2) * (np.sin(np.pi * x[0])) * (np.sin(np.pi * x[1]))
+    f_1 = lambda x: -(2.0 * (np.pi) ** 2) * (np.cos(np.pi * x[0])) * (np.cos(np.pi * x[1]))
+    f = [f_0, f_1]
     # ------------------------------------------------------------------------------------------------------------------
-    # u_0 = lambda x: (np.sin(np.pi * x[0])) * (np.sin(np.pi * x[1])) + x[0] / (2.0 * lam)
-    u_0 = lambda x: 0.0
-    f_0 = lambda x: -2.0 * ((np.pi) ** 2) * (np.sin(np.pi * x[0])) * (np.sin(np.pi * x[1]))
-    # f_0 = lambda x: -(2.0 / ((np.pi) ** 2)) * (np.sin(np.pi * x[0])) * (np.sin(np.pi * x[1]))
-    # anal_sol_x = lambda x: np.sin(np.pi * x[0]) * np.sin(np.pi * x[1]) + 1.0 / (2.0 * lam) * x[0]
-    # anal_sol_y = lambda x: np.cos(np.pi * x[0]) * np.cos(np.pi * x[1]) + 1.0 / (2.0 * lam) * x[1]
+    pressure_left = [None, None]
+    pressure_right = [None, None]
+    pressure_top = [None, None]
+    pressure_bottom = [None, None]
     # ------------------------------------------------------------------------------------------------------------------
-    dirichlet_x_bottom = lambda s: 0.0
+    displacement_left = [lambda s: u_0([0.0, s]), lambda s: u_1([0.0, s])]
+    displacement_right = [lambda s: u_0([1.0, s]), lambda s: u_1([1.0, s])]
+    displacement_top = [lambda s: u_0([s, 1.0]), lambda s: u_1([s, 1.0])]
+    displacement_bottom = [lambda s: u_0([s, 0.0]), lambda s: u_1([s, 0.0])]
     # ------------------------------------------------------------------------------------------------------------------
-    dirichlet_x_top = lambda s: 0.0
-    # ------------------------------------------------------------------------------------------------------------------
-    dirichlet_x_left = lambda s: 0.0
-    # ------------------------------------------------------------------------------------------------------------------
-    dirichlet_x_right = lambda s: 0.0
-    # ------------------------------------------------------------------------------------------------------------------
-    # load_x = lambda x: 2.0 * (np.pi ** 2) * np.sin(np.pi * x[0]) * np.sin(np.pi * x[1])
-    # load_y = lambda x: 2.0 * (np.pi ** 2) * np.cos(np.pi * x[0]) * np.cos(np.pi * x[1])
-    displacement_left = [dirichlet_x_left]
-    displacement_right = [dirichlet_x_right]
-    displacement_top = [dirichlet_x_top]
-    displacement_bottom = [dirichlet_x_bottom]
-    # ------------------------------------------------------------------------------------------------------------------
-    load = [f_0]
+    load = [f_0, f_1]
     # ------------------------------------------------------------------------------------------------------------------
     boundary_conditions = {
         "RIGHT": (displacement_right, pressure_right),
@@ -725,12 +724,30 @@ def solve_2D_incompressible_problem(
         unknown,
     ) = build(mesh_file, field_dimension, face_polynomial_order, cell_polynomial_order, operator_type)
     # ------------------------------------------------------------------------------------------------------------------
-    tangent_matrix = np.array([[1.0, 0.0], [0.0, 1.0],])
+    coef = 2.0
+    tangent_matrix_lam = np.array(
+        [[lam, lam, 0.0, 0.0], [lam, lam, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0],]
+    )
+    tangent_matrix_mu = np.array(
+        [
+            [coef * mu, 0.0, 0.0, 0.0],
+            [0.0, coef * mu, 0.0, 0.0],
+            [0.0, 0.0, coef * mu, 0.0],
+            [0.0, 0.0, 0.0, coef * mu],
+        ]
+    )
+    tangent_matrix = tangent_matrix_lam + tangent_matrix_mu
     tangent_matrices = [tangent_matrix for i in range(len(cells))]
     # ------------------------------------------------------------------------------------------------------------------
     (
         (vertices, unknowns_at_vertices),
-        (quadrature_points, unknowns_at_quadrature_points, error_at_quadrature_points, quadrature_weights),
+        (
+            quadrature_points,
+            unknowns_at_quadrature_points,
+            error_at_quadrature_points,
+            div_at_quadrature_points,
+            quadrature_weights,
+        ),
         (vertices, f_unknowns_at_vertices),
         (x_cell_list, x_faces_list),
     ) = solve(
@@ -750,148 +767,91 @@ def solve_2D_incompressible_problem(
         stabilization_parameter,
         boundary_conditions,
         load,
+        u,
     )
     # ==================================================================================================================
-    fig, (ax0, ax1, ax2) = plt.subplots(nrows=1, ncols=3, sharex=True)
-    fig.subplots_adjust(left=None, bottom=None, right=None, top=None, wspace=0.3, hspace=None)
+    fig, (ax0, ax0e, ax0d, ax1) = plt.subplots(nrows=1, ncols=4, sharex=True)
     # ==================================================================================================================
-    if False:
-        x, y = quadrature_points.T
-        # x, y = vertices.T
-        data = ax0.tricontourf(x, y, unknowns_at_quadrature_points[:, 0], cmap=cm.binary)
-        # data = ax0.tricontourf(x, y, unknowns_at_vertices[0], cmap=cm.binary)
-        # data = ax0.tricontourf(x, y, unknowns_at_vertices[0], cmap=cm.binary, levels=np.linspace(0.0, 1.0, 1000))
-        # data = ax.tricontourf(x, y, unknowns_at_quadrature_points[1], cmap=cm.binary)
-        # data = ax.tricontourf(x, y, unknowns_at_quadrature_points[0], vmin=vmin, vmax=vmax, cmap=cm.binary)
-        ax0.set_xlim(0.0, 1.0)
-        ax0.set_ylim(0.0, 1.0)
-        ax0.get_xaxis().set_visible(False)
-        ax0.get_yaxis().set_visible(False)
-        ax0.set_xlabel("map of the domain $\Omega$")
-        ax0.set_title(
-            "{}, $k = {}, l = {}$, stab $= {}$".format(
-                operator_type, face_polynomial_order, cell_polynomial_order, stabilization_parameter
-            )
-        )
-        cbar = fig.colorbar(data, ax=ax0)
-        cbar.set_label("{} solution".format(operator_type), rotation=270, labelpad=15.0)
-    # ---------
+    # --------------------------------------------------- MESH
+    # ==================================================================================================================
+    # x, y = quadrature_points.T + unknowns_at_quadrature_points.T
     x, y = quadrature_points.T
-    # X, Y = vertices.T
-    # triang = mtri.Triangulation(X, Y, triangles)
-    # x, y = vertices.T
-    colors = [(1, 0, 0), (1, 0.6470588235294118, 0), (0, 0, 0)]  # R -> G -> B
-    colors = [(1.0, 1.0, 1.0), (0.0, 0.0, 0.0)]  # Halloween
-    # colors = [(0.7843137254901961, 0, 0), (0, 0.7843137254901961, 0), (1, 1, 1)]  # CEA
-    # n_bin = 1000  # Discretizes the interpolation into bins
-    custom_cm = LinearSegmentedColormap.from_list("my_list", colors, N=1000)
-    levels = np.linspace(-0.001, 1.0, 21, endpoint=True)
-    data = ax0.tricontourf(x, y, unknowns_at_quadrature_points[:, 0], cmap=custom_cm, vmin=0.0, vmax=1.0, levels=levels)
-    # ax0.triplot(triang, linewidth=0.2, color="grey")
-    # data = ax0.tricontourf(x, y, unknowns_at_vertices[0], cmap=cm.binary)
-    # data = ax0.tricontourf(x, y, unknowns_at_vertices[0], cmap=cm.binary, levels=np.linspace(0.0, 1.0, 1000))
-    # data = ax.tricontourf(x, y, unknowns_at_quadrature_points[1], cmap=cm.binary)
-    # data = ax.tricontourf(x, y, unknowns_at_quadrature_points[0], vmin=vmin, vmax=vmax, cmap=cm.binary)
-    ax0.set_xlim(0.0, 1.0)
-    ax0.set_ylim(0.0, 1.0)
-    ax0.get_xaxis().set_visible(False)
-    ax0.get_yaxis().set_visible(False)
-    ax0.set_xlabel("map of the domain $\Omega$")
-    ax0.set_title(
-        "{}, $k = {}, l = {}$, stab $= {}$".format(
-            operator_type, face_polynomial_order, cell_polynomial_order, stabilization_parameter
-        )
-    )
-    cbar = fig.colorbar(data, ax=ax0, ticks=[0.0, 0.5, 1.0])
-    # cbar.set_label("{} solution".format(operator_type), rotation=270, labelpad=15.0)
-    cbar.set_label("{} solution".format(operator_type), rotation=270, labelpad=15.0)
+    # X, Y = vertices.T + f_unknowns_at_vertices.T
+    X, Y = vertices.T
+    triang = mtri.Triangulation(X, Y, triangles)
+    # ------------------------------------------------------------------------------------------------------------------
+    levels = np.linspace(-0.0, 1.1, 21, endpoint=True)
+    ticks = np.linspace(-0.0, 1.1, 11, endpoint=True)
     # ==================================================================================================================
-    x = np.linspace(0.0, 1.0, 1000)
-    y = np.linspace(0.0, 1.0, 1000)
-    X, Y = np.meshgrid(x, y)
-    anal_sol_x = lambda x: np.sin(np.pi * x[0]) * np.sin(np.pi * x[1])
-    # Z = -(1.0 / (2.0 * np.pi) ** 2) * (np.sin(2.0 * np.pi * X))
-    Z = np.sin(np.pi * X) * np.sin(np.pi * Y)
-    nb = 500
-    x = np.linspace(0.0, 1.0, nb)
-    pts = []
-    for i in range(nb):
-        for j in range(nb):
-            pts.append(np.array([x[i], x[j]]))
-    vmax = max([anal_sol_x(pt) for pt in pts])
-    vmin = min([anal_sol_x(pt) for pt in pts])
-    # vmax = -(1.0 / (2.0 * np.pi) ** 2) * (np.sin(2.0 * np.pi * 0.75))
-    # vmin = -(1.0 / (2.0 * np.pi) ** 2) * (np.sin(2.0 * np.pi * 0.25))
-    col_levels = 21
+    # --------------------------------------------------- ANALYTICAL
+    # ==================================================================================================================
+    x_sq = np.linspace(0.0, 1.0, 1000)
+    y_sq = np.linspace(0.0, 1.0, 1000)
+    X_sq, Y_sq = np.meshgrid(x_sq, y_sq)
+    Z_X = np.sin(np.pi * X_sq) * np.sin(np.pi * Y_sq) + X_sq / (2.0 * lam)
+    Z_Y = np.cos(np.pi * X_sq) * np.cos(np.pi * Y_sq) + Y_sq / (2.0 * lam)
     # CS = ax1.contourf(X, Y, Z, col_levels, vmin=vmin, vmax=vmax, cmap=cm.binary)
-    # CS = ax1.contourf(X, Y, Z, col_levels, cmap=cm.binary)
-    CS = ax1.contourf(X, Y, Z, col_levels, cmap=cm.binary, vmin=0.0, vmax=1.0)
-    CS = ax1.contourf(X, Y, Z, cmap=custom_cm, vmin=0.0, vmax=1.0, levels=levels)
-    m = plt.cm.ScalarMappable(cmap=cm.binary)
-    m.set_array(Z)
-    # m.set_clim(vmin, vmax)
-    # cbar = fig.colorbar(m, boundaries=np.linspace(vmin, vmax, col_levels), ax=ax1)
-    # cbar = fig.colorbar(m, ax=ax1)
-    cbar = fig.colorbar(CS, ax=ax1, ticks=[0.0, 0.5, 1.0])
+    # CS = ax1.contourf(X, Y, Z_X, col_levels, vmin=vmin, vmax=vmax, cmap=cm.binary)
+    CS = ax1.contourf(X_sq, Y_sq, Z_X, cmap=cm.binary, levels=levels)
+    cbar = fig.colorbar(CS, ax=ax1, ticks=ticks)
     cbar.set_label("Analytical solution", rotation=270, labelpad=15.0)
-    # cbar.set_label("{} solution".format(operator_type), rotation=270, labelpad=15.0)
-    # cbar.set_label("{} solution".format(operator_type), rotation=270, labelpad=15.0)
     ax1.set_xlim(0.0, 1.0)
     ax1.set_ylim(0.0, 1.0)
     ax1.get_xaxis().set_visible(False)
     ax1.get_yaxis().set_visible(False)
     ax1.set_xlabel("map of the domain $\Omega$")
     ax1.set_title("Analytical Solution")
+    # ------------------------------------------------------------------------------------------------------------------
+    # data = ax0d.scatter(x, y, c=lam * div_at_quadrature_points, cmap=cm.binary, s=20)
+    # datad = ax0d.tricontourf(x, y, div_at_quadrature_points[:], cmap=cm.binary)
+    # ax0d.triplot(triang, linewidth=0.2, color="grey")
+    # ax0d.get_xaxis().set_visible(False)
+    # ax0d.get_yaxis().set_visible(False)
+    # ax0d.set_xlabel("map of the domain $\Omega$")
+    # ax0d.set_title("{}, $k = {}, l = {}$".format(operator_type, face_polynomial_order, cell_polynomial_order))
+    # cbar = fig.colorbar(datad, ax=ax0d)
+    # cbar.set_label("{} hydrostatic pressure".format(operator_type), rotation=270, labelpad=15.0)
     # ==================================================================================================================
-    nb = 500
-    x = np.linspace(0.0, 1.0, nb)
-    pts = []
-    for i in range(nb):
-        for j in range(nb):
-            pts.append(np.array([x[i], x[j]]))
-    vmax = max([anal_sol_x(pt) for pt in pts])
-    # x, y = quadrature_points.T
-    # error = unknowns_at_quadrature_points[:, 0] - np.array([anal_sol_x(quad_p) for quad_p in quadrature_points])
-    # error = np.abs(error) / vmax * 100.0
-    # error = np.abs(error_at_quadrature_points[0]) / vmax * 100.0
-    # data = ax2.tricontourf(x, y, error, cmap=cm.binary)
-    # ax2.set_xlim(0.0, 1.0)
-    # ax2.set_ylim(0.0, 1.0)
-    # ax2.get_xaxis().set_visible(False)
-    # ax2.get_yaxis().set_visible(False)
-    # ax2.set_xlabel("map of the domain $\Omega$")
-    # ax2.set_title("Error")
-    # cbar = fig.colorbar(data, ax=ax2)
-    # cbar.set_label("Relative error (percent)", rotation=270, labelpad=15.0)
-    # -------------------------------------------------
-    x, y = quadrature_points.T
-    # X, Y = vertices.T
-    # triang = mtri.Triangulation(X, Y, triangles)
-    # x, y = vertices.T
-    colors = [(1, 0, 0), (1, 0.6470588235294118, 0), (0, 0, 0)]  # R -> G -> B
-    colors = [(1.0, 1.0, 1.0), (0.0, 0.0, 0.0)]  # Halloween
-    # colors = [(0.7843137254901961, 0, 0), (0, 0.7843137254901961, 0), (1, 1, 1)]  # CEA
-    # n_bin = 1000  # Discretizes the interpolation into bins
-    # custom_cm = LinearSegmentedColormap.from_list("my_list", colors, N=1000)
-    error = unknowns_at_quadrature_points[:, 0] - np.array([anal_sol_x(quad_p) for quad_p in quadrature_points])
-    error = np.abs(error) / vmax * 100.0
-    error = np.abs(error_at_quadrature_points[0]) / vmax * 100.0
-    data = ax2.tricontourf(x, y, error, cmap=cm.binary)
-    # ax0.triplot(triang, linewidth=0.2, color="grey")
-    # data = ax0.tricontourf(x, y, unknowns_at_vertices[0], cmap=cm.binary)
-    # data = ax0.tricontourf(x, y, unknowns_at_vertices[0], cmap=cm.binary, levels=np.linspace(0.0, 1.0, 1000))
-    # data = ax.tricontourf(x, y, unknowns_at_quadrature_points[1], cmap=cm.binary)
-    # data = ax.tricontourf(x, y, unknowns_at_quadrature_points[0], vmin=vmin, vmax=vmax, cmap=cm.binary)
-    ax2.set_xlim(0.0, 1.0)
-    ax2.set_ylim(0.0, 1.0)
-    ax2.get_xaxis().set_visible(False)
-    ax2.get_yaxis().set_visible(False)
-    ax2.set_xlabel("map of the domain $\Omega$")
-    ax2.set_title("Error")
-    cbar = fig.colorbar(data, ax=ax2)
-    # cbar.set_label("{} solution".format(operator_type), rotation=270, labelpad=15.0)
-    # cbar.set_label("{} solution".format(operator_type), rotation=270, labelpad=15.0)
-    cbar.set_label("Relative error (percent)", rotation=270, labelpad=15.0)
+    # --------------------------------------------------- NUMERICAL
+    # ==================================================================================================================
+    data0 = ax0.tricontourf(x, y, unknowns_at_quadrature_points[:, 0], cmap=cm.binary, levels=levels)
+    # data0 = ax0.tricontourf(X, Y, unknowns_at_vertices[:, 0], cmap=cm.binary)
+    ax0.triplot(triang, linewidth=0.2, color="grey")
+    ax0.get_xaxis().set_visible(False)
+    ax0.get_yaxis().set_visible(False)
+    ax0.set_xlabel("map of the domain $\Omega$")
+    ax0.set_title("{}, $k = {}, l = {}$".format(operator_type, face_polynomial_order, cell_polynomial_order))
+    cbar = fig.colorbar(data0, ax=ax0, ticks=ticks)
+    cbar.set_label("{} solution".format(operator_type), rotation=270, labelpad=15.0)
+    # ==================================================================================================================
+    # --------------------------------------------------- ERROR
+    # ==================================================================================================================
+    # data1 = ax1.tricontourf(x, y, unknowns_at_quadrature_points[:, 1], cmap=cm.binary)
+    data1 = ax0e.tricontourf(x, y, np.abs(error_at_quadrature_points[:, 0]) * 100.0, cmap=cm.binary)
+    # data1 = ax0e.tricontourf(x, y, div_at_quadrature_points, cmap=cm.binary)
+    # data1 = ax1.tricontourf(X, Y, unknowns_at_vertices[:, 1], cmap=cm.binary)
+    ax0e.triplot(triang, linewidth=0.2, color="grey")
+    ax0e.get_xaxis().set_visible(False)
+    ax0e.get_yaxis().set_visible(False)
+    ax0e.set_xlabel("map of the domain $\Omega$")
+    ax0e.set_title("Error".format(operator_type, face_polynomial_order, cell_polynomial_order))
+    cbar = fig.colorbar(data1, ax=ax0e)
+    cbar.set_label("Relative error (percent)".format(operator_type), rotation=270, labelpad=15.0)
+    # ==================================================================================================================
+    # --------------------------------------------------- DIV
+    # ==================================================================================================================
+    # data1 = ax1.tricontourf(x, y, unknowns_at_quadrature_points[:, 1], cmap=cm.binary)
+    # data1 = ax0e.tricontourf(x, y, np.abs(error_at_quadrature_points[:, 0]) * 100.0, cmap=cm.binary)
+    datad = ax0d.tricontourf(x, y, div_at_quadrature_points, cmap=cm.binary)
+    # data1 = ax1.tricontourf(X, Y, unknowns_at_vertices[:, 1], cmap=cm.binary)
+    ax0d.triplot(triang, linewidth=0.2, color="grey")
+    ax0d.get_xaxis().set_visible(False)
+    ax0d.get_yaxis().set_visible(False)
+    ax0d.set_xlabel("map of the domain $\Omega$")
+    ax0d.set_title("Divergence".format(operator_type, face_polynomial_order, cell_polynomial_order))
+    cbar = fig.colorbar(datad, ax=ax0d)
+    cbar.set_label("Divergence".format(operator_type), rotation=270, labelpad=15.0)
+    # ==================================================================================================================
     plt.show()
     return (
         (vertices, unknowns_at_vertices),
@@ -910,51 +870,50 @@ def create_plot(file_path: str, number_of_elements):
         count = 1
         for point_Y in segmentation:
             for point_X in segmentation:
-                mesh_file.write("{} {} {}\n".format(count, point_X, point_Y))
+                X = point_X
+                Y = point_Y
+                mesh_file.write("{} {} {}\n".format(count, X, Y))
                 count += 1
         nb_el = 2 * (number_of_elements * number_of_elements)
         mesh_file.write("**element\n{}\n".format(nb_el))
         count = 1
+        triangles = []
         for count_node in range(number_of_elements):
             for count_line in range(number_of_elements):
                 count_node_eff = count_node + 1
                 count_line_eff = count_line
-                # p1 = (count_line * number_of_nodes) + count_node
-                # p2 = (count_line * number_of_nodes) + count_node + 1
-                # p3 = ((count_line + 1) * number_of_nodes) + count_node
                 p1 = count_node_eff + (count_line_eff * nb_nd)
                 p2 = count_node_eff + 1 + (count_line_eff * nb_nd)
                 p3 = count_node_eff + nb_nd + (count_line_eff * nb_nd)
-                #
-                # mesh_file.write("{} c2d3 {} {} {}\n".format(count, p1 + 1, p2 + 1, p3 + 1))
                 mesh_file.write("{} c2d3 {} {} {}\n".format(count, p1, p2, p3))
+                triangles.append([p1 - 1, p2 - 1, p3 - 1])
                 count += 1
                 #
-                # q1 = (count_line * number_of_nodes) + count_node + 1
-                # q2 = ((count_line + 1) * number_of_nodes) + count_node
-                # q3 = ((count_line + 2) * number_of_nodes) + count_node
                 q1 = count_node_eff + 1 + (count_line_eff * nb_nd)
                 q2 = count_node_eff + nb_nd + (count_line_eff * nb_nd)
                 q3 = count_node_eff + nb_nd + 1 + (count_line_eff * nb_nd)
-                #
-                # mesh_file.write("{} c2d3 {} {} {}\n".format(count, q1 + 1, q2 + 1, q3 + 1))
                 mesh_file.write("{} c2d3 {} {} {}\n".format(count, q1, q3, q2))
+                triangles.append([q1 - 1, q3 - 1, q2 - 1])
                 count += 1
-        # mesh_file.write("***group\n**nset LEFT\n1\n**nset RIGHT\n{}\n***return".format(number_of_nodes))
+        eps = 0.001
         mesh_file.write("***group\n")
-        mesh_file.write("**nset BOTTOM\n")
-        count = 1
-        for point_Y in segmentation:
-            for point_X in segmentation:
-                if point_Y == 0.0:
-                    mesh_file.write(" {}".format(count))
-                count += 1
-        mesh_file.write("\n")
         mesh_file.write("**nset TOP\n")
         count = 1
         for point_Y in segmentation:
             for point_X in segmentation:
-                if point_Y == 1.0:
+                X = point_X
+                Y = point_Y
+                if np.abs(Y - 1.0) < eps:
+                    mesh_file.write(" {}".format(count))
+                count += 1
+        mesh_file.write("\n")
+        mesh_file.write("**nset BOTTOM\n")
+        count = 1
+        for point_Y in segmentation:
+            for point_X in segmentation:
+                X = point_X
+                Y = point_Y
+                if np.abs(Y - 0.0) < eps:
                     mesh_file.write(" {}".format(count))
                 count += 1
         mesh_file.write("\n")
@@ -962,7 +921,9 @@ def create_plot(file_path: str, number_of_elements):
         count = 1
         for point_Y in segmentation:
             for point_X in segmentation:
-                if point_X == 0.0:
+                X = point_X
+                Y = point_Y
+                if np.abs(X - 0.0) < eps:
                     mesh_file.write(" {}".format(count))
                 count += 1
         mesh_file.write("\n")
@@ -970,20 +931,23 @@ def create_plot(file_path: str, number_of_elements):
         count = 1
         for point_Y in segmentation:
             for point_X in segmentation:
-                if point_X == 1.0:
+                X = point_X
+                Y = point_Y
+                if np.abs(X - 1.0) < eps:
                     mesh_file.write(" {}".format(count))
                 count += 1
         mesh_file.write("\n")
         mesh_file.write("***return")
-    return
+    return triangles
 
 
-number_of_elements = 10
+number_of_elements = 30
 face_polynomial_order = 1
-cell_polynomial_order = 2
-operator_type = "HHO"
-stabilization_parameter = 1.0
+cell_polynomial_order = 1
+operator_type = "HDGs"
+stabilization_parameter = 2.0 * 1.0
 
 solve_2D_incompressible_problem(
     number_of_elements, face_polynomial_order, cell_polynomial_order, operator_type, stabilization_parameter
 )
+

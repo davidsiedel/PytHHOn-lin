@@ -1,4 +1,5 @@
-import os
+import sys, os
+from pathlib import Path
 from typing import List
 from typing import Callable
 import numpy as np
@@ -12,8 +13,10 @@ import matplotlib.cm as cm
 import matplotlib.mlab as mlab
 from matplotlib import rc
 
-from tests import context
-from tests.context import source
+current_folder = Path(os.path.dirname(os.path.abspath(__file__)))
+source = current_folder.parent.parent
+package_folder = os.path.join(source, "pythhon3d")
+sys.path.insert(0, package_folder)
 
 # from pythhon3d import build, solve
 
@@ -686,7 +689,8 @@ def solve_2D_incompressible_problem(
     displacement_top = [u_0, u_0]
     displacement_bottom = [u_0, u_0]
     # ------------------------------------------------------------------------------------------------------------------
-    load = [f_0, u_0]
+    # load = [f_0, u_0]
+    load = [f_0, f_0]
     # ------------------------------------------------------------------------------------------------------------------
     boundary_conditions = {
         "RIGHT": (displacement_right, pressure_right),
@@ -712,7 +716,7 @@ def solve_2D_incompressible_problem(
     # ------------------------------------------------------------------------------------------------------------------
     tangent_matrix = np.array([[1.0, 0.0], [0.0, 1.0],])
     tangent_matrix = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]])
-    tangent_matrix = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]])
+    # tangent_matrix = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]])
     tangent_matrices = [tangent_matrix for i in range(len(cells))]
     # ------------------------------------------------------------------------------------------------------------------
     (

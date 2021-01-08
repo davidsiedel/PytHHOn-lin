@@ -1,4 +1,5 @@
-import os
+import sys, os
+from pathlib import Path
 from typing import List
 from typing import Callable
 import numpy as np
@@ -16,15 +17,14 @@ import matplotlib.tri as mtri
 from scipy.sparse.linalg import spsolve
 from scipy.sparse import csr_matrix
 from scipy.sparse import dia_matrix
-
-# import mgis
-# import mg.behaviour
 from matplotlib import rc
 
-from tests import context
-from tests.context import source
+current_folder = Path(os.path.dirname(os.path.abspath(__file__)))
+source = current_folder.parent.parent
+package_folder = os.path.join(source, "pythhon3d")
+sys.path.insert(0, package_folder)
 
-# from pythhon3d import build, solve
+# from tests.context import source
 
 rc("font", **{"family": "sans-serif", "sans-serif": ["Helvetica"], "size": 12})
 rc("text", usetex=True)
@@ -85,11 +85,7 @@ f = [f_0, f_1]
 
 
 def build(
-    mesh_file: str,
-    field_dimension: int,
-    face_polynomial_order: int,
-    cell_polynomial_order: int,
-    operator_type: str,
+    mesh_file: str, field_dimension: int, face_polynomial_order: int, cell_polynomial_order: int, operator_type: str,
 ):
     """
     ====================================================================================================================
@@ -322,12 +318,7 @@ def solve(
         # Static condensation
         # --------------------------------------------------------------------------------------------------------------
         m_cond, v_cond = Condensation.get_condensated_system(
-            m_cell_cell_inv,
-            m_cell_faces,
-            m_faces_cell,
-            m_faces_faces,
-            v_cell,
-            v_faces,
+            m_cell_cell_inv, m_cell_faces, m_faces_cell, m_faces_faces, v_cell, v_faces,
         )
         v_cell, m_cell_faces, m_cell_cell_inv
         stored_matrices.append((v_cell, m_cell_faces, m_cell_cell_inv))
@@ -357,10 +348,7 @@ def solve(
             if not displacement_component is None:
                 number_of_constrained_faces += len(nset)
     lagrange_multiplyer_matrix = np.zeros(
-        (
-            number_of_constrained_faces * face_basis_k.basis_dimension,
-            total_system_size,
-        )
+        (number_of_constrained_faces * face_basis_k.basis_dimension, total_system_size,)
     )
     h_vector = np.zeros((number_of_constrained_faces * face_basis_k.basis_dimension,))
     iter_constrained_face = 0
@@ -870,12 +858,7 @@ def solve_2D_incompressible_problem(
     # ------------------------------------------------------------------------------------------------------------------
     coef = 2.0
     tangent_matrix_lam = np.array(
-        [
-            [lam, lam, 0.0, 0.0],
-            [lam, lam, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0],
-        ]
+        [[lam, lam, 0.0, 0.0], [lam, lam, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0],]
     )
     tangent_matrix_mu = np.array(
         [

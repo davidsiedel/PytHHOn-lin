@@ -1,4 +1,5 @@
-import os
+import sys, os
+from pathlib import Path
 from typing import List
 from typing import Callable
 import numpy as np
@@ -14,8 +15,10 @@ import matplotlib.tri as mtri
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib import rc
 
-from tests import context
-from tests.context import source
+current_folder = Path(os.path.dirname(os.path.abspath(__file__)))
+source = current_folder.parent.parent
+package_folder = os.path.join(source, "pythhon3d")
+sys.path.insert(0, package_folder)
 
 # from pythhon3d import build, solve
 
@@ -44,11 +47,11 @@ from core.load import Load
 from core.condensation import Condensation
 from core.integration import Integration
 
-number_of_elements = 40
+number_of_elements = 30
 l = 2.0 / float(number_of_elements)
 G_c = 2.5
 face_polynomial_order = 1
-cell_polynomial_order = 2
+cell_polynomial_order = 1
 operator_type = "HHO"
 stabilization_parameter = 1.0
 
